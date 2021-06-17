@@ -27,7 +27,7 @@ from scipy import stats
 import PseudoNetCDF as pnc
 from matplotlib.lines import Line2D
 import matplotlib.patches as mpatches
-
+import scipy.io
 #--------------------------------------------
 #--------------------------------------------
 
@@ -37,6 +37,8 @@ def toTimestamp(d):
 def toDatetime(d):
     return datetime.datetime.utcfromtimestamp(d)
 
+
+    
 
 
 path = '/mnt/raid/mwstanfo/camp2ex/aerosol/'
@@ -86,6 +88,67 @@ for elev_file in elev_files:
 elev_files = elev_files[2:]
 elev_dates_dt = elev_dates_dt[2:]
 
+# cloud flag
+path = '/mnt/raid/mwstanfo/camp2ex/'
+file = path+'CloudFlag.mat'
+mat = scipy.io.loadmat(file)
+mat_cloud_flag = np.squeeze(mat['CloudFlag'])
+num_flights = 19
+cloud_flag = []
+cloud_flag_time = []
+
+for ii in range(num_flights):
+    tmp_cloud_flag_time = mat_cloud_flag[ii][0][0][0][0] # time
+    tmp_cloud_flag = mat_cloud_flag[ii][0][0][1][0] # cloud flag
+    cloud_flag.append(tmp_cloud_flag)
+    cloud_flag_time.append(tmp_cloud_flag_time)
+
+# convert cloud flag time to UTC
+cloud_flag_times_dt = []
+for ii in range(num_flights):
+    tmp_cloud_flag_time = cloud_flag_time[ii]
+    # tmp_cloud_flag_time is in hour.fraction_of_hour from the start time
+    start_time = tmp_cloud_flag_time[0]
+    start_time_hour = int(np.floor(start_time))
+    start_time_frac_of_hour = start_time - start_time_hour
+    start_time_min_frac_of_min = start_time_frac_of_hour*60.
+    start_time_min = int(np.floor(start_time_min_frac_of_min))
+    start_time_frac_of_min = start_time_min_frac_of_min - start_time_min
+    start_time_sec_frac_of_sec = start_time_frac_of_min*60.
+    start_time_sec = np.round(start_time_sec_frac_of_sec)
+    start_time_sec = start_time_sec.astype(int)
+
+    #start_time_sec = int(np.floor(start_time_sec_frac_of_sec))
+    #start_time_frac_of_sec = start_time_sec_frac_of_sec - start_time_sec
+    #start_time_millisec = start_time_frac_of_sec*1000.
+    #start_time_millisec = start_time_millisec.astype(int)
+    
+    start_time_dt = datetime.datetime(elev_dates_dt[ii].year,\
+                                      elev_dates_dt[ii].month,\
+                                      elev_dates_dt[ii].day,\
+                                      start_time_hour,\
+                                      start_time_min,\
+                                      start_time_sec)
+    
+    # need to convert this to seconds since it is seconds past the start time
+    #tmp_secs_past = cloud_flag_time[ii]*60.*60.
+    tmp_millisecs_past = cloud_flag_time[ii]*60.*60.*1000.
+    millisecs_past = tmp_millisecs_past - tmp_millisecs_past[0]
+    millisecs_past = millisecs_past.astype(int)
+    secs_past = np.round(millisecs_past/1000)
+    #secs_past = secs_past.astype(int)
+    # round to nearest second
+
+    #dum = np.diff(secs_past)
+    #np.unique(dum)
+    #print(aaaa)
+    tmp_time = np.array([start_time_dt + datetime.timedelta(seconds=int(secs_past[jj])) for jj in range(len(secs_past))])
+    cloud_flag_times_dt.append(tmp_time)
+    #print(aaaaa)
+    
+    
+
+
 aero_dates_dt = []
 fcdp_dates_dt = []
 nav_dates_dt = []
@@ -98,7 +161,7 @@ for ii in range(num_flights):
     print(ii)
     print(str((ii+1)/num_flights*100.)+'% done')
     
-    
+        
     # get aerosol dates
     tmp_str = aero_files[ii].split('/')
     tmp_str = tmp_str[-1]
@@ -161,6 +224,10 @@ for ii in range(num_flights):
 
     aero_times_dt = aero_date_dt + aero_time_start*datetime.timedelta(seconds=1)
     aero_infile.close()
+    
+    # cloud flag
+    cloud_flag_times_dt_single_flight = cloud_flag_times_dt[ii]
+    cloud_flag_single_flight = cloud_flag[ii]
 
     # elevation file
     elev_infile = pnc.pncopen(elev_files[ii],format='ffi1001')
@@ -176,7 +243,7 @@ for ii in range(num_flights):
     # fcdp file
     fcdp_infile = pnc.pncopen(fcdp_files[ii],format='ffi1001')
     fcdp_con = np.array(fcdp_infile.variables['conc'].copy()) #/L
-    fcdp_con = fcdp_con*1.e-3
+    fcdp_con = fcdp_con*1.e-3 #/cm^3
     fcdp_time_start = np.array(fcdp_infile.variables['Time_Start'].copy())
     fcdp_infile.close()
     fcdp_date_dt = fcdp_dates_dt[ii]
@@ -285,13 +352,28 @@ for ii in range(num_flights):
     elev_times_dt = elev_times_dt[tmpid]    
     aircraft_alt = aircraft_alt[tmpid]      
     
-    # create cloud mask
-    cloud_mask = np.zeros(np.shape(fcdp_con))
-    tmpid = np.where(fcdp_con*1.e3 > 0.03)
-    cloud_mask[tmpid] = 1
-    # calculate "clear sky" aerosol
+    tmpid = np.where( (cloud_flag_times_dt_single_flight >= lower_time_limit) & (cloud_flag_times_dt_single_flight <= upper_time_limit) )
+    cloud_flag_times_dt_single_flight = cloud_flag_times_dt_single_flight[tmpid]
+    cloud_flag_single_flight = cloud_flag_single_flight[tmpid]
+    
+    
 
     
+    # create cloud mask
+    
+    
+    # create cloud mask
+    cloud_mask = np.zeros(np.shape(cloud_flag_single_flight))
+    tmpid = np.where(cloud_flag_single_flight == 1.)
+    cloud_mask[tmpid] = 1
+    
+    
+    
+    #cloud_mask = np.zeros(np.shape(fcdp_con))
+    #tmpid = np.where(fcdp_con > 0.03)
+    #cloud_mask[tmpid] = 1
+    
+    # calculate "clear sky" aerosol
     N_D_out_of_cloud = np.zeros(np.shape(N_D))
     dN_dlogD_out_of_cloud = np.zeros(np.shape(N_D))
     tmpid = np.where(cloud_mask == 1.)
@@ -354,6 +436,7 @@ for ii in range(num_flights):
     #if aero_date_dt != datetime.datetime(2019,9,21):
     #    continue
     
+
     # plot 
     #if False:
     if True:
@@ -584,6 +667,8 @@ for ii in range(num_flights):
         ax8.set_xlim(1.e1,150)
         ax9.set_ylim(1.e-2,5.e2)
         ax3.set_ylim(1,1.1)
+        ax1.set_ylim(5.e1,5.e6)
+        ax2.set_ylim(5,300)
 
         
         ax1.set_yscale('log')
@@ -593,8 +678,10 @@ for ii in range(num_flights):
         ax9.set_yscale('log')  
         
         # create cloud mask
-        tmp_cloud_mask = np.zeros(np.shape(fcdp_con))
-        tmpid = np.where(fcdp_con > 0.03)
+        #tmp_cloud_mask = np.zeros(np.shape(fcdp_con))
+        tmp_cloud_mask = np.zeros(np.shape(cloud_flag_single_flight))
+        #tmpid = np.where(fcdp_con > 0.03)
+        tmpid = np.where(cloud_flag_single_flight == 1.)
         tmp_cloud_mask[tmpid] = 1
         cloud_objects,num_cloud_objects = ndimage.label(tmp_cloud_mask)
         
@@ -605,12 +692,14 @@ for ii in range(num_flights):
                 tmpid = np.where(cloud_objects == jj+1)
                 if np.size(tmpid) > 1:
                     tmpid = np.squeeze(tmpid)
-                    dum = ax.axvspan(fcdp_times_dt[tmpid[0]],fcdp_times_dt[tmpid[-1]],\
+                    #dum = ax.axvspan(fcdp_times_dt[tmpid[0]],fcdp_times_dt[tmpid[-1]],\
+                    #                        alpha=0.5,color='deepskyblue',ec=None)
+                    dum = ax.axvspan(cloud_flag_times_dt_single_flight[tmpid[0]],cloud_flag_times_dt_single_flight[tmpid[-1]],\
                                             alpha=0.5,color='deepskyblue',ec=None)
-
         
         blue_patch = mpatches.Patch(color='deepskyblue',\
-                                label='In-Cloud, $N_{c}$ > 0.03 cm$^{-3}$',alpha=0.5)
+                                label='In-Cloud',alpha=0.5)
+                                #label='In-Cloud, $N_{c}$ > 0.03 cm$^{-3}$',alpha=0.5)
 
         lgnd2 = ax1.legend(handles=[blue_patch],fontsize=Fontsize,\
                               bbox_to_anchor=(0.5,1.3),\
@@ -670,8 +759,8 @@ for ii in range(num_flights):
         
         
         tmp_time = aero_date_dt.strftime("%m_%d_%Y")
-        fig_path = '/home/mwstanfo/figures/camp2ex/flight_aerosol/'
-        outfile = 'flight_aerosol_{}_v2.png'.format(tmp_time)
+        fig_path = '/home/mwstanfo/camp2ex/figures/'
+        outfile = 'flight_aerosol_{}_v3.png'.format(tmp_time)
         plt.savefig(fig_path+outfile,dpi=200,bbox_inches='tight')
         plt.close()  
 
